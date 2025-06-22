@@ -173,7 +173,8 @@ def find_spreads(
     enable_bollinger=False,
     boll_upper=None,
     boll_lower=None,
-    debug=False
+    debug=False,
+    spread_width=None
 ):
     df['expiration_date'] = pd.to_datetime(df['expiration_date'], errors='coerce').dt.tz_localize(None)
     df['bid_iv'] = df['greeks.bid_iv'].astype(float)
@@ -193,7 +194,7 @@ def find_spreads(
             long = sub.iloc[i + 1]
             width = abs(long['strike'] - short['strike'])
 
-            if width not in [5, 10]:
+            if spread_width is not None and width != spread_width:
                 continue
 
             credit = short['bid'] - long['ask']
@@ -658,6 +659,10 @@ with tabs[0]:
                 boll_upper, boll_lower = bollinger_bands(dummy_series)
 
                 f = st.session_state.filters
+
+                # ✅ NEW SPREAD WIDTH INPUT
+                spread_width = st.selectbox("Choose spread width:", options=[1, 5, 10], index=1)
+
                 filtered_spreads = find_spreads(
                     df_chain,
                     underlying_price=price,
@@ -675,8 +680,10 @@ with tabs[0]:
                     rsi_thresholds=(f['rsi_low'], f['rsi_high']),
                     enable_bollinger=f['enable_bollinger'],
                     boll_upper=boll_upper,
-                    boll_lower=boll_lower
+                    boll_lower=boll_lower,
+                    spread_width=None  # ✅ INCLUDED HERE
                 )
+
                 if filtered_spreads.empty:
                     st.info("No spreads found with current filters.")
                 else:
@@ -743,6 +750,7 @@ with tabs[2]:
         f['min_credit'] = st.number_input("Min Credit ($)", 0.0, 10.0, f['min_credit'], 0.05, help="Minimum credit received for spread")
         f['delta_low'] = st.slider("Min Delta", 0.0, 1.0, f['delta_low'], 0.05, help="Minimum delta of short leg")
         f['delta_high'] = st.slider("Max Delta", 0.0, 1.0, f['delta_high'], 0.05, help="Maximum delta of short leg")
+        f['spread_width'] = st.selectbox("Spread Width", options=[1, 2, 5, 10], index=2, help="Width between strikes for the credit spread")
 
     with col2:
         f['enable_pop_filter'] = st.checkbox("Enable Probability of Profit (Max Delta) Filter", f['enable_pop_filter'], help="Filter spreads with delta above max delta")
