@@ -68,7 +68,9 @@ def get_expirations(symbol):
 @st.cache_data(ttl=30)
 def get_chain(symbol, expiry):
     if TEST_MODE:
-        return pd.read_csv("mock_chain.csv")
+        df = pd.read_csv("mock_chain.csv")
+        df['expiration_date'] = pd.to_datetime(df['expiration_date'], errors='coerce')
+        return df
     url = "https://sandbox.tradier.com/v1/markets/options/chains"
     params = {"symbol": symbol, "expiration": expiry, "greeks": "true"}
     r = requests.get(url, headers=HEADERS, params=params)
@@ -145,6 +147,7 @@ def find_spreads(
     boll_upper=None,
     boll_lower=None
 ):
+    df['expiration_date'] = pd.to_datetime(df['expiration_date'], errors='coerce')
     df['bid_iv'] = df['greeks.bid_iv'].astype(float)
     df['delta'] = df['greeks.delta'].astype(float)
     df['volume'] = df['volume'].astype(int)
@@ -766,3 +769,4 @@ with tabs[3]:
 
     # Show performance analytics on closed trades
     show_performance_analytics()
+
