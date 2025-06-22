@@ -7,3 +7,4 @@ pytz
 requests
 python-dateutil
 matplotlib
+alpaca-trade-api
