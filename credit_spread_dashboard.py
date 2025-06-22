@@ -6,6 +6,12 @@ import streamlit as st
 from datetime import datetime, timedelta
 import math
 
+eastern_now = datetime.now().astimezone().strftime('%H:%M')
+market_open = "09:30"
+market_close = "16:00"
+
+TEST_MODE = not (market_open <= eastern_now <= market_close)
+
 
 st.set_page_config(page_title="Credit Spread Dashboard with Presets & Orders", layout="wide")
 
@@ -49,6 +55,8 @@ if "trade_log" not in st.session_state:
 
 @st.cache_data(ttl=60)
 def get_expirations(symbol):
+    if TEST_MODE:
+        return ['2024-06-21']
     url = "https://sandbox.tradier.com/v1/markets/options/expirations"
     params = {"symbol": symbol, "includeAllRoots": "true"}
     r = requests.get(url, headers=HEADERS, params=params)
@@ -59,6 +67,8 @@ def get_expirations(symbol):
 
 @st.cache_data(ttl=30)
 def get_chain(symbol, expiry):
+    if TEST_MODE:
+        return pd.read_csv("mock_chain.csv")
     url = "https://sandbox.tradier.com/v1/markets/options/chains"
     params = {"symbol": symbol, "expiration": expiry, "greeks": "true"}
     r = requests.get(url, headers=HEADERS, params=params)
@@ -70,6 +80,8 @@ def get_chain(symbol, expiry):
 
 @st.cache_data(ttl=300)
 def get_quote(symbol):
+    if TEST_MODE:
+        return 435.00
     url = f"https://sandbox.tradier.com/v1/markets/quotes"
     params = {"symbols": symbol}
     r = requests.get(url, headers=HEADERS, params=params)
@@ -84,6 +96,8 @@ def get_quote(symbol):
 
 @st.cache_data(ttl=300)
 def get_earnings(symbol):
+    if TEST_MODE:
+        return [datetime(2024, 6, 25)]
     today = datetime.utcnow().strftime('%Y-%m-%d')
     url = f"https://sandbox.tradier.com/v1/markets/calendar/earnings"
     params = {"symbol": symbol, "start": today, "end": (datetime.utcnow() + timedelta(days=30)).strftime('%Y-%m-%d')}
@@ -93,6 +107,7 @@ def get_earnings(symbol):
         dates = [item['date'] for item in data['earnings']['calendar']]
         return [datetime.strptime(d, '%Y-%m-%d') for d in dates]
     return []
+
 
 def rsi(series, period=14):
     delta = series.diff()
