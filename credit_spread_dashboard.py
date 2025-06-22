@@ -804,7 +804,10 @@ with tabs[3]:
                     "unrealized_pl": 0.0,
                     "status": "OPEN"
                 }
-                st.session_state.trade_log = pd.concat([st.session_state.trade_log, pd.DataFrame([new_trade])], ignore_index=True)
+                st.session_state.trade_log = pd.concat(
+                    [st.session_state.trade_log, pd.DataFrame([new_trade])],
+                    ignore_index=True
+                )
                 st.success(f"Added open trade {trade_id}")
 
     st.markdown("---")
@@ -815,10 +818,21 @@ with tabs[3]:
     st.markdown("---")
 
     # Show trade log with export button
-    show_trade_log_and_export()
+    if st.session_state.trade_log.empty:
+        st.info("No trades recorded yet.")
+    else:
+        st.dataframe(st.session_state.trade_log)
+
+        # CSV Download button right here
+        csv = st.session_state.trade_log.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Trade Log as CSV",
+            data=csv,
+            file_name='trade_log.csv',
+            mime='text/csv'
+        )
 
     st.markdown("---")
 
     # Show performance analytics on closed trades
     show_performance_analytics()
-
