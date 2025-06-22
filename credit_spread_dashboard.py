@@ -69,16 +69,19 @@ def get_expirations(symbol):
 def get_chain(symbol, expiry):
     if TEST_MODE:
         df = pd.read_csv("mock_chain.csv")
-        df['expiration_date'] = pd.to_datetime(df['expiration_date'], errors='coerce')
+        df["expiration_date"] = pd.to_datetime(df["expiration_date"], errors="coerce")
         return df
+    # Live mode
     url = "https://sandbox.tradier.com/v1/markets/options/chains"
     params = {"symbol": symbol, "expiration": expiry, "greeks": "true"}
     r = requests.get(url, headers=HEADERS, params=params)
     data = r.json()
     if 'options' in data and 'option' in data['options']:
         df = pd.json_normalize(data['options']['option'])
+        df["expiration_date"] = pd.to_datetime(df["expiration_date"], errors="coerce")
         return df
     return pd.DataFrame()
+
 
 @st.cache_data(ttl=300)
 def get_quote(symbol):
