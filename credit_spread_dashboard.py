@@ -3,15 +3,34 @@ import requests
 import pandas as pd
 import numpy as np
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import math
+import zoneinfo  # Python 3.9+ built-in, no install needed
+import pytz
+import pandas_market_calendars as mcal  # install via pip if needed
 
-eastern_now = datetime.now().astimezone().strftime('%H:%M')
-market_open = "09:30"
-market_close = "16:00"
+# Get current time in Eastern
+eastern = pytz.timezone('US/Eastern')
+now = datetime.now(eastern)
 
-TEST_MODE = not (market_open <= eastern_now <= market_close)
+# Market hours
+market_open = time(9, 30)
+market_close = time(16, 0)
 
+# Calendar setup
+nyse = mcal.get_calendar('NYSE')
+
+# Get today's trading schedule (set a 1-day range)
+today_str = now.strftime('%Y-%m-%d')
+schedule = nyse.schedule(start_date=today_str, end_date=today_str)
+
+# Logic flags
+is_weekday = now.weekday() < 5
+is_market_day = not schedule.empty
+is_market_hours = market_open <= now.time() <= market_close
+
+# Set TEST_MODE
+TEST_MODE = not (is_weekday and is_market_day and is_market_hours)
 
 st.set_page_config(page_title="Credit Spread Dashboard with Presets & Orders", layout="wide")
 
@@ -56,7 +75,10 @@ if "trade_log" not in st.session_state:
 @st.cache_data(ttl=60)
 def get_expirations(symbol):
     if TEST_MODE:
-        return ['2024-06-21']
+        st.write("TEST_MODE: Returning mock expirations")
+        mock_dates = ['2024-06-21']
+        st.write(f"Mock expirations: {mock_dates}")
+        return mock_dates
     url = "https://sandbox.tradier.com/v1/markets/options/expirations"
     params = {"symbol": symbol, "includeAllRoots": "true"}
     r = requests.get(url, headers=HEADERS, params=params)
@@ -68,25 +90,26 @@ def get_expirations(symbol):
 @st.cache_data(ttl=30)
 def get_chain(symbol, expiry):
     if TEST_MODE:
+        st.write("TEST_MODE: Loading mock chain from CSV")
         df = pd.read_csv("mock_chain.csv")
-        df["expiration_date"] = pd.to_datetime(df["expiration_date"], errors="coerce")
+        st.write(f"Mock chain head:\n{df.head()}")
         return df
-    # Live mode
     url = "https://sandbox.tradier.com/v1/markets/options/chains"
     params = {"symbol": symbol, "expiration": expiry, "greeks": "true"}
     r = requests.get(url, headers=HEADERS, params=params)
     data = r.json()
     if 'options' in data and 'option' in data['options']:
         df = pd.json_normalize(data['options']['option'])
-        df["expiration_date"] = pd.to_datetime(df["expiration_date"], errors="coerce")
         return df
     return pd.DataFrame()
-
 
 @st.cache_data(ttl=300)
 def get_quote(symbol):
     if TEST_MODE:
-        return 435.00
+        st.write("TEST_MODE: Returning mock quote")
+        mock_quote = 435.00
+        st.write(f"Mock quote: {mock_quote}")
+        return mock_quote
     url = f"https://sandbox.tradier.com/v1/markets/quotes"
     params = {"symbols": symbol}
     r = requests.get(url, headers=HEADERS, params=params)
@@ -102,7 +125,10 @@ def get_quote(symbol):
 @st.cache_data(ttl=300)
 def get_earnings(symbol):
     if TEST_MODE:
-        return [datetime(2024, 6, 25)]
+        st.write("TEST_MODE: Returning mock earnings dates")
+        mock_earnings = [datetime(2024, 6, 25)]
+        st.write(f"Mock earnings: {mock_earnings}")
+        return mock_earnings
     today = datetime.utcnow().strftime('%Y-%m-%d')
     url = f"https://sandbox.tradier.com/v1/markets/calendar/earnings"
     params = {"symbol": symbol, "start": today, "end": (datetime.utcnow() + timedelta(days=30)).strftime('%Y-%m-%d')}
@@ -112,8 +138,6 @@ def get_earnings(symbol):
         dates = [item['date'] for item in data['earnings']['calendar']]
         return [datetime.strptime(d, '%Y-%m-%d') for d in dates]
     return []
-
-
 def rsi(series, period=14):
     delta = series.diff()
     gain = delta.clip(lower=0).rolling(window=period).mean()
@@ -148,15 +172,15 @@ def find_spreads(
     rsi_thresholds=(30, 70),
     enable_bollinger=False,
     boll_upper=None,
-    boll_lower=None
+    boll_lower=None,
+    debug=False
 ):
-    df['expiration_date'] = pd.to_datetime(df['expiration_date'], errors='coerce')
+    df['expiration_date'] = pd.to_datetime(df['expiration_date'], errors='coerce').dt.tz_localize(None)
     df['bid_iv'] = df['greeks.bid_iv'].astype(float)
     df['delta'] = df['greeks.delta'].astype(float)
     df['volume'] = df['volume'].astype(int)
     df['open_interest'] = df['open_interest'].astype(int)
-    df['expiration_date'] = pd.to_datetime(df['expiration_date'])
-    
+
     df = df[df['bid_iv'] >= min_iv_rank]
     df = df[df['open_interest'] >= min_oi]
     df = df[df['volume'] >= min_volume]
@@ -168,28 +192,37 @@ def find_spreads(
             short = sub.iloc[i]
             long = sub.iloc[i + 1]
             width = abs(long['strike'] - short['strike'])
+
             if width not in [5, 10]:
                 continue
+
             credit = short['bid'] - long['ask']
             if credit < min_credit:
                 continue
+
             max_loss = width - credit
             roi = credit / max_loss if max_loss else 0
-            
+
             if not (delta_range[0] <= abs(short['delta']) <= delta_range[1]):
                 continue
-            
-            if max_delta is not None:
-                if abs(short['delta']) > max_delta:
-                    continue
-            
+
+            if max_delta is not None and abs(short['delta']) > max_delta:
+                continue
+
             if short['volume'] < min_volume or short['open_interest'] < min_oi:
                 continue
 
             if exclude_price_move:
-                dte = (short['expiration_date'] - pd.Timestamp.utcnow()).days
+                try:
+                    dte = (short['expiration_date'] - pd.Timestamp.utcnow().replace(tzinfo=None)).days
+                except Exception as e:
+                    if debug:
+                        print("Error calculating DTE:", e)
+                    continue
+
                 if dte <= 0:
                     continue
+
                 iv = short['bid_iv']
                 move = expected_move(underlying_price, iv, dte)
                 dist = abs(short['strike'] - underlying_price)
@@ -199,7 +232,7 @@ def find_spreads(
             if exclude_earnings_days is not None and earnings_dates is not None:
                 exclude = False
                 for edate in earnings_dates:
-                    days_to_earnings = (edate - pd.Timestamp.utcnow()).days
+                    days_to_earnings = (edate - pd.Timestamp.utcnow().replace(tzinfo=None)).days
                     if 0 <= days_to_earnings <= exclude_earnings_days:
                         if abs((short['expiration_date'] - edate).days) <= exclude_earnings_days:
                             exclude = True
@@ -212,6 +245,7 @@ def find_spreads(
                     continue
                 if typ == 'call' and rsi[-1] < rsi_thresholds[1]:
                     continue
+
             if enable_bollinger and boll_upper is not None and boll_lower is not None:
                 if typ == 'put' and underlying_price < boll_lower[-1]:
                     continue
@@ -231,7 +265,14 @@ def find_spreads(
                 volume=short['volume'],
                 oi=short['open_interest']
             ))
-    return pd.DataFrame(results).sort_values('roi', ascending=False)
+
+    df_results = pd.DataFrame(results)
+    if not df_results.empty:
+        return df_results.sort_values('roi', ascending=False)
+    else:
+        if debug:
+            print("No spreads found with current filters.")
+        return df_results
 
 def get_positions():
     try:
